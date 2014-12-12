@@ -1,6 +1,7 @@
 
 require 'serverengine'
 require 'msgpack'
+require 'timeout'
 
 # Server module controls the parent process
 module MyServer
@@ -19,20 +20,16 @@ end
 module MyWorker
 
   def run
-    logger.info("start worker #{self.worker_id}")
+    logger.debug("start worker #{self.worker_id}")
     buf = ""
     recv_buffer_size = config[:recv_buffer_max]
     @msg_unpacker = MessagePack::Unpacker.new
     while @stop != true 
-      #r, w = IO.select([server.sock], nil, nil, 5)
-      #if r.nil? || r[0] == nil
-      #  #logger.debug("timeout")
-      #  next
-      #end
-
       begin
-        c = server.sock.accept
-        #c = r[0].accept
+        c = nil
+        timeout(10) do
+          c = server.sock.accept
+        end
         begin
           logger.info("accept")
           if c.read(recv_buffer_size + 1, buf) != nil
@@ -49,12 +46,15 @@ module MyWorker
             end
           end
         ensure
-          c.close
+          c.close if ! c.nil?
         end
+      rescue Timeout::Error
+        logger.debug("accept time out")
       rescue => e
         logger.error(e.inspect)
       end
     end
+    logger.debug("end worker #{self.worker_id}")
   end
 
   def stop
@@ -74,7 +74,12 @@ module MyWorker
         @msg_unpacker.feed_each(entries) do | obj |
           logger.debug("obj: #{obj.to_s}")
         end
-        return
+
+        option = msg[2]
+        logger.debug("option: " + option.to_s)
+
+        return option
+
       elsif entries.class == Array
         logger.debug("message: #{msg.to_s}")
         return nil
