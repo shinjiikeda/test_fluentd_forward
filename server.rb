@@ -32,18 +32,24 @@ module MyWorker
         end
         begin
           logger.info("accept")
-          if c.read(recv_buffer_size + 1, buf) != nil
-            if buf.bytesize <= recv_buffer_size
-              @msg_unpacker.feed_each(buf) do | obj |
-                option = process_message(obj)
-                if option && option['chunk']
-                  res = { 'ack' => option['chunk'] }
-                  c.write(res.to_msgpack)
+          rs, ws, = IO.select([c], nil, nil, 30)
+          if rs && rs[0] != nil
+            c = rs[0]
+            if c.read(recv_buffer_size, buf) != nil
+              if buf.bytesize < recv_buffer_size
+                @msg_unpacker.feed_each(buf) do | obj |
+                  option = process_message(obj)
+                  if option && option['chunk']
+                    res = { 'ack' => option['chunk'] }
+                    c.write(res.to_msgpack)
+                  end
                 end
+              else
+                logger.error("buffer overflow")
               end
-            else
-              logger.error("buffer overflow")
-            end
+            end 
+          else
+            logger.debug("read time out")
           end
         ensure
           c.close if ! c.nil?
@@ -81,8 +87,6 @@ module MyWorker
         return option
 
       elsif entries.class == Array
-        logger.debug("message: #{msg.to_s}")
-        return nil
       
         # Forward
         events = []
@@ -101,6 +105,8 @@ module MyWorker
         return option
       else
         logger.error("unkown message")
+        logger.debug("message: #{msg.to_s}")
+        return nil
       end
     rescue => e
       logger.error(e.inspect)
@@ -119,7 +125,7 @@ se = ServerEngine.create(MyServer, MyWorker, {
   worker_graceful_kill_timeout: 30,
   bind: '0.0.0.0',
   port: 9071,
-  recv_buffer_max: 10_000_000,
+  recv_buffer_max: 10383360, # 10MB
 })
 
 se.run
